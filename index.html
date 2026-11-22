@@ -318,6 +318,17 @@ a{color:inherit;text-decoration:none}
 .blocked-screen .bl-ic{font-size:90px;filter:drop-shadow(0 0 30px rgba(239,68,68,.6));animation:float 3s ease-in-out infinite}
 .blocked-screen .bl-title{font-size:24px;font-weight:900;color:var(--danger)}
 .blocked-screen .bl-sub{font-size:14px;color:var(--muted);max-width:340px;line-height:1.8}
+
+.skin-proof-box{background:rgba(212,175,55,.05);border:1px dashed rgba(212,175,55,.3);border-radius:14px;padding:16px;margin-bottom:16px;}
+.skin-proof-box .title{font-weight:800;font-size:14px;color:var(--gold);margin-bottom:8px;display:flex;align-items:center;gap:6px;}
+.skin-images-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px;}
+.skin-images-grid img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;border:1px solid var(--border-2);}
+.announcement-bar{background:linear-gradient(135deg,rgba(124,58,237,.2),rgba(212,175,55,.1));border:1px solid rgba(212,175,55,.4);border-radius:16px;padding:16px;margin:14px;position:relative;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,.3);}
+.announcement-bar::before{content:'';position:absolute;top:0;right:0;width:4px;height:100%;background:var(--gold);}
+.announcement-bar h3{font-size:15px;font-weight:800;color:var(--gold);margin-bottom:6px;display:flex;align-items:center;gap:6px;}
+.announcement-bar p{font-size:13px;color:var(--txt);line-height:1.6;}
+.comment-box{background:var(--glass);border:1px solid var(--border-2);border-radius:12px;padding:12px;margin-bottom:10px;}
+.comment-box .reply{background:rgba(0,0,0,.15);padding:8px;border-radius:8px;margin-top:8px;margin-right:16px;border-right:2px solid var(--border-2);}
 </style>
 </head>
 <body>
@@ -329,9 +340,6 @@ a{color:inherit;text-decoration:none}
 </div>
 
 <script type="module">
-/* ============================================================
-   Yassin_Vip-HUP — v16 (النسخة النهائية بعد التعديلات)
-   ============================================================ */
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import {
   getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
@@ -373,7 +381,9 @@ let SYSTEM_SETTINGS = {
   verificationApiUrl: "",
   verificationApiSite: "",
   verificationApiModel: "",
-  verificationApiKey: ""
+  verificationApiKey: "",
+  announcementText: "",
+  announcementActive: false
 };
 
 let REGISTRATION_CODE_SETTINGS = {
@@ -399,6 +409,8 @@ let productsUnsub = null;
 let allUsers = {};
 let unlockedVideos = new Set();
 let registrationTimerInterval = null;
+let USER_SKIN_VERIFIED = false;
+let skinImages = { skin1: '', skin2: '', skin3: '' };
 
 const $app = document.getElementById('app');
 
@@ -500,7 +512,7 @@ function extractYouTubeId(url){
 
 function buildProtectedEmbed(videoId){
   if(!videoId) return '';
-  return `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&playsinline=1&iv_load_policy=3&fs=1&showinfo=0&controls=1&disablekb=1`;
+  return `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&playsinline=1&fs=1&origin=${encodeURIComponent(window.location.origin)}`;
 }
 
 function clearListeners(){
@@ -538,19 +550,14 @@ function normalizeDriveLink(url){
   return url;
 }
 
-async function analyzeImageWithAI(imageUrl){
+async function analyzeImageWithAI(imageUrl, customPrompt){
   if(SYSTEM_SETTINGS.verificationApiUrl && SYSTEM_SETTINGS.verificationApiUrl.trim()){
     try {
       const apiUrl = SYSTEM_SETTINGS.verificationApiUrl.trim();
       const model = SYSTEM_SETTINGS.verificationApiModel?.trim() || '';
       const site = SYSTEM_SETTINGS.verificationApiSite?.trim() || '';
 
-      const body = {
-        model: model,
-        messages: [
-          {
-            role: 'system',
-            content: `أنت خبير تحقق من صور يوتيوب. مهمتك: تتأكد إن الصورة دي سكرين شوت حقيقي من قناة يوتيوب "${YOUTUBE_CHANNEL}"، وبتوضح أحد المتطلبات الثلاثة:
+      let systemPrompt = customPrompt || `أنت خبير تحقق من صور يوتيوب. مهمتك: تتأكد إن الصورة دي سكرين شوت حقيقي من قناة يوتيوب "${YOUTUBE_CHANNEL}"، وبتوضح أحد المتطلبات الثلاثة:
 1) اشتراك (Subscribe) في القناة
 2) لايك (Like) على فيديو من القناة
 3) تعليق (Comment) على فيديو من القناة
@@ -558,12 +565,16 @@ async function analyzeImageWithAI(imageUrl){
 لو الصورة مش سكرين شوت من يوتيوب، أو مش بتوضح أي من المتطلبات، أو مش حقيقية (مركبة/مزيفة/صورة عادية)، رجّع valid=false.
 لو الصورة حقيقية وبتوضح المتطلب، رجّع valid=true مع نسبة ثقة.
 رجّع الرد دايماً كـ JSON بالشكل ده: {"valid": true/false, "confidence": 0-100, "reason": "السبب"}
-${site ? `ملاحظة: الموقع/المصدر: ${site}` : ''}`
-          },
+${site ? `ملاحظة: الموقع/المصدر: ${site}` : ''}`;
+
+      const body = {
+        model: model,
+        messages: [
+          { role: 'system', content: systemPrompt },
           {
             role: 'user',
             content: [
-              { type: 'text', text: 'حلل الصورة دي وقول هل هي سكرين شوت حقيقي يوضح المتطلب من قناة يوتيوب.' },
+              { type: 'text', text: 'حلل الصورة دي وقول هل هي سكرين شوت حقيقي يوضح المتطلب.' },
               { type: 'image_url', image_url: { url: imageUrl } }
             ]
           }
@@ -578,7 +589,7 @@ ${site ? `ملاحظة: الموقع/المصدر: ${site}` : ''}`
       const res = await fetch(apiUrl, { method:'POST', headers, body: JSON.stringify(body) });
       if(!res.ok){
         console.warn('API check failed status:', res.status);
-        return { valid: true, confidence: 50, reason: 'تعذر التحليل - سيتم إرسالها للمطور' };
+        return { valid: false, confidence: 0, reason: 'تعذر التحقق، جرب ترفع صورة أوضح أو تأكد إنها من قناتنا' };
       }
 
       const data = await res.json();
@@ -607,7 +618,7 @@ ${site ? `ملاحظة: الموقع/المصدر: ${site}` : ''}`
 
     } catch(e){
       console.warn('Custom API failed:', e);
-      return { valid: true, confidence: 50, reason: 'تعذر التحليل - سيتم إرسالها للمطور' };
+      return { valid: false, confidence: 0, reason: 'تعذر التحقق، جرب ترفع صورة أوضح أو تأكد إنها من قناتنا' };
     }
   }
 
@@ -633,7 +644,7 @@ ${site ? `ملاحظة: الموقع/المصدر: ${site}` : ''}`
     return { valid: confidence >= 50, confidence: Math.min(confidence, 99), reason: 'صورة صالحة' };
   } catch(e){
     console.warn('AI check failed:', e);
-    return { valid: true, confidence: 50, reason: 'تعذر التحليل - سيتم إرسالها للمطور' };
+    return { valid: false, confidence: 0, reason: 'تعذر التحقق، جرب ترفع صورة أوضح أو تأكد إنها من قناتنا' };
   }
 }
 
@@ -671,6 +682,8 @@ function render(screen, params = {}){
   if(screen === 'manage-roles') return renderManageRoles();
   if(screen === 'manage-codes') return renderManageCodes(params.id);
   if(screen === 'manage-registration-codes') return renderManageRegistrationCodes();
+  if(screen === 'skin-proof') return renderSkinProof();
+  if(screen === 'admin-announcement') return renderAdminAnnouncement();
 }
 
 function validateCode(codeObj, uid){
@@ -723,6 +736,13 @@ onAuthStateChanged(auth, async user => {
         uid:user.uid, name:user.displayName || 'مستخدم', email:user.email, photo:user.photoURL || '', createdAt: Date.now(), online: true
       };
       MY_PERMISSIONS = CURRENT_USER.permissions || {};
+      USER_SKIN_VERIFIED = CURRENT_USER.skinVerified || false;
+      skinImages = {
+        skin1: CURRENT_USER.skin1 || '',
+        skin2: CURRENT_USER.skin2 || '',
+        skin3: CURRENT_USER.skin3 || ''
+      };
+      
       if(!snap.exists()) set(ref(db, `users/${user.uid}`), CURRENT_USER);
       if(currentScreen !== 'login' && currentScreen !== 'register') {
         handlePostLogin(user);
@@ -751,6 +771,8 @@ onAuthStateChanged(auth, async user => {
     if(registrationTimerInterval) { clearInterval(registrationTimerInterval); registrationTimerInterval = null; }
     if(productsUnsub){ productsUnsub(); productsUnsub = null; }
     allProducts = {}; allUsers = {};
+    USER_SKIN_VERIFIED = false;
+    skinImages = { skin1: '', skin2: '', skin3: '' };
     route('login');
   }
 });
@@ -843,7 +865,7 @@ function renderAuth(mode){
         await set(ref(db, `users/${cred.user.uid}`), {
           uid: cred.user.uid, name, email, photo: '', bio: '', role: cred.user.uid === ADMIN_UID ? 'admin' : 'user',
           permissions: {}, createdAt: Date.now(), online: true, lastSeen: Date.now(),
-          accessGranted: false, verificationStatus: 'pending'
+          accessGranted: false, verificationStatus: 'pending', skinVerified: false
         });
         toast('تم إنشاء الحساب 🎉', 'ok');
       }
@@ -1390,6 +1412,7 @@ async function renderAdminSettings(){
       <div style="margin-top:24px;padding-top:20px;border-top:1px solid var(--border-2)">
         <button class="btn btn-info" id="manageRegCodesBtn">🔑 إدارة أكواد التسجيل</button>
         <button class="btn btn-warn" id="reviewVerifsBtn" style="margin-top:10px">👀 مراجعة طلبات التحقق</button>
+        <button class="btn btn-primary" id="manageAnnBtn" style="margin-top:10px">📢 إدارة البوسترات</button>
       </div>
     </div>
   `;
@@ -1397,6 +1420,7 @@ async function renderAdminSettings(){
   document.getElementById('back').onclick = () => route('admin');
   document.getElementById('manageRegCodesBtn').onclick = () => route('manage-registration-codes');
   document.getElementById('reviewVerifsBtn').onclick = () => renderReviewVerifications();
+  document.getElementById('manageAnnBtn')?.addEventListener('click', () => route('admin-announcement'));
 
   document.getElementById('saveSysSettings').onclick = async () => {
     const modeRadio = document.querySelector('input[name="verifMode"]:checked');
@@ -1591,6 +1615,178 @@ async function renderManageRegistrationCodes(){
 }
 
 // ============================================================
+// 🆕 إدارة البوسترات
+// ============================================================
+async function renderAdminAnnouncement(){
+  if(!IS_ADMIN) return route('home');
+  const sSnap = await get(ref(db, 'systemSettings'));
+  const settings = { ...SYSTEM_SETTINGS, ...(sSnap.val() || {}) };
+  $app.innerHTML = `
+    <div class="topbar"><button class="icon-btn" id="back">←</button><h1>📢 إدارة البوسترات</h1></div>
+    <div class="page" style="padding:20px">
+      <div class="info-box" style="margin-bottom:16px">من هنا تقدر تضيف بوستر تحديث هيظهر للمستخدمين في الصفحة الرئيسية.</div>
+      <div class="field"><label>📝 نص البوستر</label><textarea id="annText" rows="4">${esc(settings.announcementText || '')}</textarea></div>
+      <div class="checkbox-row"><input type="checkbox" id="annActive" ${settings.announcementActive ? 'checked' : ''}><span class="lbl">✅ تفعيل البوستر (هيظهر للمستخدمين)</span></div>
+      <button class="btn btn-primary" id="saveAnnBtn" style="margin-top:20px">💾 حفظ البوستر</button>
+    </div>
+  `;
+  document.getElementById('back').onclick = () => route('admin-settings');
+  document.getElementById('saveAnnBtn').onclick = async () => {
+    const text = document.getElementById('annText').value.trim();
+    const active = document.getElementById('annActive').checked;
+    try {
+      await update(ref(db, 'systemSettings'), { announcementText: text, announcementActive: active });
+      SYSTEM_SETTINGS.announcementText = text; SYSTEM_SETTINGS.announcementActive = active;
+      toast('تم الحفظ ✅', 'ok');
+    } catch(e) { toast('فشل', 'err'); }
+  };
+}
+
+// ============================================================
+// 🆕 نظام صور الجلد
+// ============================================================
+function renderSkinProof(){
+  const user = CURRENT_USER || {};
+  const isVerified = user.skinVerified || false;
+  $app.innerHTML = `
+    <div class="topbar"><button class="icon-btn" id="back">←</button><h1>🖼️ صور الجلد</h1></div>
+    <div class="page" style="padding:20px">
+      <div style="text-align:center;margin-bottom:20px">
+        <div style="font-size:48px;margin-bottom:8px">🖼️</div>
+        <h2 style="font-size:20px;font-weight:800;margin-bottom:6px">التحقق من صور الجلد</h2>
+        <p style="color:var(--muted);font-size:13px;max-width:340px;margin:0 auto;line-height:1.7">لازم ترفع صور جلد عشان تتأكد من هويتك وتقدر تحمل الملفات. المطور هيقوم بمراجعة الصور.</p>
+      </div>
+      ${isVerified ? `
+        <div style="background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3);border-radius:14px;padding:16px;text-align:center;margin-bottom:16px">
+          <div style="font-size:40px;margin-bottom:8px">✅</div>
+          <div style="font-weight:800;color:var(--success);margin-bottom:6px">تم التحقق بنجاح</div>
+          <div style="font-size:13px;color:var(--muted)">يمكنك الآن تحميل الملفات بحرية.</div>
+        </div>
+      ` : `
+        <div class="skin-proof-box">
+          <div class="title">📸 رفع صور الجلد</div>
+          <p style="font-size:12px;color:var(--muted);margin-bottom:10px">ارفع 3 صور واضحة للجلد الخاص بك.</p>
+          <div class="skin-images-grid">
+            ${[1,2,3].map(i => `
+              <div style="text-align:center">
+                <input type="file" id="skinFile${i}" accept="image/*" style="display:none">
+                <button class="btn btn-ghost" id="skinBtn${i}" style="padding:8px;font-size:11px">📤 صورة ${i}</button>
+                <div id="skinPreview${i}" style="margin-top:6px;min-height:60px">${skinImages[`skin${i}`] ? `<img src="${esc(skinImages[`skin${i}`])}" style="max-width:100%;max-height:60px;border-radius:6px">` : ''}</div>
+              </div>
+            `).join('')}
+          </div>
+          <button class="btn btn-success" id="submitSkinBtn" style="margin-top:16px">📤 إرسال طلب التحقق</button>
+        </div>
+      `}
+    </div>
+  `;
+  document.getElementById('back').onclick = () => route('home');
+  if(!isVerified){
+    [1,2,3].forEach(i => {
+      const btn = document.getElementById(`skinBtn${i}`);
+      const inp = document.getElementById(`skinFile${i}`);
+      const prev = document.getElementById(`skinPreview${i}`);
+      if(!btn || !inp || !prev) return;
+      btn.onclick = () => inp.click();
+      inp.onchange = async (e) => {
+        const f = e.target.files[0]; if(!f) return;
+        btn.disabled = true; btn.textContent = '⏳...';
+        try {
+          const url = await uploadImage(f);
+          prev.innerHTML = `<img src="${esc(url)}" style="max-width:100%;max-height:60px;border-radius:6px">`;
+          skinImages[`skin${i}`] = url;
+          btn.disabled = false; btn.textContent = '✅ تم';
+        } catch(err) { toast('فشل رفع الصورة', 'err'); btn.disabled = false; btn.textContent = `📤 صورة ${i}`; }
+      };
+    });
+    document.getElementById('submitSkinBtn').onclick = async () => {
+      if(!skinImages.skin1 || !skinImages.skin2 || !skinImages.skin3) { toast('لازم ترفع 3 صور جلد', 'err'); return; }
+      const btn = document.getElementById('submitSkinBtn');
+      btn.disabled = true; btn.textContent = '⏳ جاري التحقق بالذكاء الاصطناعي...';
+      try {
+        let valid = true;
+        if(SYSTEM_SETTINGS.aiCheckEnabled) {
+          const skinPrompt = `أنت خبير تحقق. الصورة دي المفروض تكون صورة جلد إنسان حقيقي. لو الصورة مش جلد حقيقي، ارجع valid=false. رد بـ JSON: {"valid": true/false, "confidence": 0-100, "reason": "السبب"}`;
+          const res = await analyzeImageWithAI(skinImages.skin1, skinPrompt);
+          if(!res.valid) { toast(res.reason, 'err'); btn.disabled = false; btn.textContent = '📤 إرسال طلب التحقق'; return; }
+        }
+        await update(ref(db, `users/${CURRENT_UID}`), { skin1: skinImages.skin1, skin2: skinImages.skin2, skin3: skinImages.skin3, skinVerified: true, skinSubmittedAt: Date.now() });
+        toast('🎉 تم التحقق بنجاح!', 'ok'); USER_SKIN_VERIFIED = true;
+        setTimeout(() => renderSkinProof(), 500);
+      } catch(err) { toast('فشل التحقق', 'err'); btn.disabled = false; btn.textContent = '📤 إرسال طلب التحقق'; }
+    };
+  }
+}
+
+// ============================================================
+// 🆕 التعليقات والتقييمات
+// ============================================================
+function renderCommentsSection(pid) {
+  return `
+    <div style="margin-top:24px;border-top:1px solid var(--border-2);padding-top:20px" id="commentsSection">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><h3 style="font-size:16px;font-weight:800">💬 التعليقات والتقييمات</h3><span id="commentsCount" style="font-size:12px;color:var(--muted)">جاري التحميل...</span></div>
+      <div style="background:var(--glass);border:1px solid var(--border-2);border-radius:14px;padding:12px;margin-bottom:16px">
+        <div id="starsContainer" style="display:flex;gap:4px;font-size:24px;cursor:pointer;margin-bottom:8px;justify-content:center">
+          <span data-star="1" style="color:var(--muted)">★</span><span data-star="2" style="color:var(--muted)">★</span><span data-star="3" style="color:var(--muted)">★</span><span data-star="4" style="color:var(--muted)">★</span><span data-star="5" style="color:var(--muted)">★</span>
+        </div>
+        <textarea id="newCommentText" placeholder="اكتب تعليقك أو تقييمك..." rows="2" style="width:100%;background:rgba(0,0,0,.25);border:1px solid var(--border-2);border-radius:10px;padding:10px;color:var(--txt);resize:none;margin-bottom:8px"></textarea>
+        <button class="btn btn-primary" id="submitCommentBtn" data-pid="${pid}" style="padding:10px">نشر التعليق</button>
+      </div>
+      <div id="commentsList" style="display:flex;flex-direction:column;gap:12px"><div class="empty"><div class="big">⏳</div><div class="title">جاري تحميل التعليقات...</div></div></div>
+    </div>
+  `;
+}
+function initCommentsHandlers(pid) {
+  let selectedRating = 0;
+  const stars = document.querySelectorAll('#starsContainer span');
+  stars.forEach(star => { star.onclick = () => { selectedRating = parseInt(star.dataset.star); stars.forEach(s => s.style.color = parseInt(s.dataset.star) <= selectedRating ? 'var(--gold)' : 'var(--muted)'); }; });
+  document.getElementById('submitCommentBtn').onclick = async () => {
+    const text = document.getElementById('newCommentText').value.trim();
+    if(!text) { toast('اكتب تعليقك أولاً', 'err'); return; }
+    try {
+      await push(ref(db, `comments/${pid}`), { uid: CURRENT_UID, userName: CURRENT_USER?.name || 'مستخدم', userEmail: CURRENT_USER?.email || '', text: text, rating: selectedRating, createdAt: Date.now() });
+      document.getElementById('newCommentText').value = ''; selectedRating = 0; stars.forEach(s => s.style.color = 'var(--muted)'); toast('تم نشر التعليق ✅', 'ok');
+    } catch(e) { toast('فشل النشر', 'err'); }
+  };
+  const commentsList = document.getElementById('commentsList');
+  const countEl = document.getElementById('commentsCount');
+  const off = onValue(ref(db, `comments/${pid}`), snap => {
+    const data = snap.val() || {};
+    const comments = Object.entries(data).map(([id, c]) => ({ id, ...c })).sort((a,b) => (b.createdAt||0)-(a.createdAt||0));
+    if(!countEl) return; countEl.textContent = `${comments.length} تعليق`;
+    if(comments.length === 0) { commentsList.innerHTML = `<div class="empty"><div class="big">💬</div><div class="title">لا توجد تعليقات بعد</div></div>`; return; }
+    commentsList.innerHTML = comments.map(c => `
+      <div class="comment-box">
+        <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px">
+          <div style="display:flex;gap:8px;align-items:center"><div class="av" style="width:32px;height:32px;font-size:12px">${initials(c.userName)}</div><div><div style="font-weight:700;font-size:12px">${esc(c.userName)}</div><div style="font-size:10px;color:var(--muted)">${timeAgo(c.createdAt)}</div></div></div>
+          ${c.rating > 0 ? `<div style="color:var(--gold);font-size:14px">${'★'.repeat(c.rating)}${'☆'.repeat(5-c.rating)}</div>` : ''}
+        </div>
+        <div style="font-size:13px;line-height:1.6;margin-bottom:8px">${esc(c.text).replace(/\n/g, '<br>')}</div>
+        <div id="replies_${c.id}" style="margin-right:20px;border-right:2px solid var(--border-2);padding-right:10px;margin-top:10px;display:flex;flex-direction:column;gap:8px">${renderReplies(pid, c.id, c.replies || {})}</div>
+        <div style="display:flex;gap:10px;margin-top:10px"><button class="btn btn-ghost btn-sm" onclick="window.__toggleReply('${pid}', '${c.id}')" style="font-size:10px;padding:4px 8px">↩️ رد</button></div>
+        <div id="replyInput_${c.id}" style="display:none;margin-top:8px">
+          <input type="text" id="replyText_${c.id}" placeholder="اكتب ردك..." style="width:100%;background:rgba(0,0,0,.25);border:1px solid var(--border-2);border-radius:8px;padding:8px;color:var(--txt);margin-bottom:4px">
+          <button class="btn btn-sm" onclick="window.__submitReply('${pid}', '${c.id}')" style="width:auto;padding:6px 12px;font-size:11px">إرسال</button>
+        </div>
+      </div>
+    `).join('');
+  });
+  listeners.push(off);
+}
+function renderReplies(pid, commentId, replies) {
+  const arr = Object.entries(replies || {}).map(([id, r]) => ({ id, ...r })).sort((a,b) => (a.createdAt||0)-(b.createdAt||0));
+  return arr.map(r => `<div class="reply"><div style="font-size:11px;font-weight:700;color:var(--gold)">${esc(r.userName)}</div><div style="font-size:12px;margin-top:2px">${esc(r.text)}</div></div>`).join('');
+}
+window.__toggleReply = (pid, cid) => { const el = document.getElementById(`replyInput_${cid}`); if(el) el.style.display = el.style.display === 'none' ? 'block' : 'none'; };
+window.__submitReply = async (pid, cid) => {
+  const inp = document.getElementById(`replyText_${cid}`); const text = inp.value.trim(); if(!text) return;
+  try {
+    await push(ref(db, `comments/${pid}/${cid}/replies`), { uid: CURRENT_UID, userName: CURRENT_USER?.name || 'مستخدم', text: text, createdAt: Date.now() });
+    inp.value = ''; window.__toggleReply(pid, cid); toast('تم إرسال الرد ✅', 'ok');
+  } catch(e) { toast('فشل الإرسال', 'err'); }
+};
+
+// ============================================================
 // باقي الشاشات (Home, Store, Product, Admin, ...)
 // ============================================================
 
@@ -1606,8 +1802,9 @@ function renderHome(){
     <div class="page" id="homePage"></div>
     <div class="tabbar">
       <div class="tab ${currentTab === 'store' ? 'active' : ''}" data-tab="store"><div class="ic">🛍️</div>المتجر</div>
-      <div class="tab ${currentTab === 'chat' ? 'active' : ''}" data-tab="chat"><div class="ic">💬</div>الدردشة</div>
-      <div class="tab ${currentTab === 'orders' ? 'active' : ''}" data-tab="orders"><div class="ic">📦</div>مشترياتي</div>
+      <div class="tab ${currentTab === 'chat' ? 'active' : ''}" data-tab="chat"><div class="ic">💬</div>المراسلة</div>
+      <div class="tab ${currentTab === 'skin' ? 'active' : ''}" data-tab="skin"><div class="ic">🖼️</div>صور الجلد</div>
+      <div class="tab ${currentTab === 'profile' ? 'active' : ''}" data-tab="profile"><div class="ic">👤</div>الحساب</div>
     </div>`;
   document.getElementById('btnTheme').onclick = toggleTheme;
   document.getElementById('btnProfile').onclick = () => route('profile');
@@ -1616,7 +1813,8 @@ function renderHome(){
     t.onclick = () => {
       currentTab = t.dataset.tab;
       if(currentTab === 'chat') return route('chat');
-      if(currentTab === 'orders') return route('orders');
+      if(currentTab === 'profile') return route('profile');
+      if(currentTab === 'skin') return route('skin-proof');
       renderHome();
     };
   });
@@ -1637,7 +1835,15 @@ function renderStoreTab(){
   const normal = sorted;
   const canAdd = IS_ADMIN || MY_PERMISSIONS?.canAddProduct;
 
+  const announcementHtml = (SYSTEM_SETTINGS.announcementActive && SYSTEM_SETTINGS.announcementText) ? `
+    <div class="announcement-bar fade-up">
+      <h3>📢 تحديث جديد</h3>
+      <p>${esc(SYSTEM_SETTINGS.announcementText).replace(/\n/g, '<br>')}</p>
+    </div>
+  ` : '';
+
   page.innerHTML = `
+    ${announcementHtml}
     ${canAdd ? `<div style="padding:14px 14px 0"><button class="btn" id="addProductBtn" style="background:linear-gradient(135deg,var(--purple),var(--purple2));color:#fff">➕ إضافة منتج جديد</button></div>` : ''}
     <div class="cats-bar">
       ${CATEGORIES.map(c => `<div class="chip ${currentCategory === c.id ? 'active' : ''}" data-cat="${c.id}"><span>${c.ic}</span><span>${c.name}</span></div>`).join('')}
@@ -1744,6 +1950,9 @@ function renderProductPage(pid){
     }
   }
 
+  const isSkinVerified = CURRENT_USER?.skinVerified || false;
+  const needSkin = !isSkinVerified && !isVideo;
+
   $app.innerHTML = `
     <div class="topbar">
       <button class="icon-btn" id="back">←</button>
@@ -1813,12 +2022,22 @@ function renderProductPage(pid){
             <button class="btn btn-primary" id="getCodeBtn">🔐 إدخال الكود للتحميل</button>
           ` : ''}
           ${p.type === 'code' && !isVideo ? `<button class="btn btn-primary" id="getCodeBtn">🔐 إدخال الكود للتحميل</button>` : ''}
-          ${p.type === 'free' && hasLink && !isVideo ? `<button class="btn btn-success" id="getFreeBtn">⬇️ تحميل مباشر</button>` : ''}
+          
+          ${p.type === 'free' && hasLink && !isVideo ? `
+            ${needSkin ? `
+              <div class="info-box" style="border-color:var(--warning);background:rgba(245,158,11,.1);text-align:center">
+                ⚠️ لازم ترفع صور جلد وتتحقق منها الأول عشان تقدر تحمل الملف.
+                <button class="btn btn-warn btn-sm" onclick="route('skin-proof')" style="margin-top:8px;width:100%">🖼️ ارفع صور الجلد دلوقتي</button>
+              </div>
+            ` : `<button class="btn btn-success" id="getFreeBtn">⬇️ تحميل مباشر</button>`}
+          ` : ''}
 
           ${canManageCodes && !isVideo ? `<button class="btn btn-info" id="manageCodesBtn" style="margin-top:8px">🔑 إدارة الأكواد (${codesCount})</button>` : ''}
           ${canSeeStats ? `<button class="btn btn-info" id="statsBtn2" style="margin-top:8px">📊 إحصائيات المنتج</button>` : ''}
           ${IS_ADMIN ? `<button class="btn btn-danger" id="deleteBtn" style="margin-top:8px">🗑️ حذف المنتج</button>` : ''}
         </div>
+
+        ${renderCommentsSection(pid)}
       </div>
     </div>`;
 
@@ -1851,6 +2070,8 @@ function renderProductPage(pid){
       openSecurePlayer(vidId, p.name);
     });
   });
+
+  initCommentsHandlers(pid);
 }
 
 function openSecurePlayer(videoId, title){
@@ -1890,7 +2111,6 @@ function openSecurePlayer(videoId, title){
   const shield = modal.querySelector('#secureShield');
   const msg = modal.querySelector('#shieldMsgContent');
 
-  // 🆕 لو وضع "تفاعل كامل" — نشيل الدرع عشان المستخدم يدوس ويلمس عادي
   if(SYSTEM_SETTINGS.youtubePlaybackMode === 'full'){
     shield.style.display = 'none';
     const noteEl = modal.querySelector('#playerNote');
@@ -1993,6 +2213,12 @@ function askForCode(p){
 }
 
 async function downloadProduct(p){
+  if(p.category !== 'videos' && !CURRENT_USER?.skinVerified) {
+    toast('⚠️ لازم ترفع صور الجلد وتتحقق منها الأول عشان تحمل الملف', 'warn');
+    route('skin-proof');
+    return;
+  }
+
   const link = (p.externalLink && p.externalLink.trim());
   if(!link){ toast('لا يوجد رابط تحميل', 'err'); return; }
   const target = normalizeDriveLink(link);
@@ -2435,7 +2661,7 @@ async function renderUsersList(){
         <div style="flex:1;min-width:0">
           <div style="font-weight:700;font-size:13px;display:flex;align-items:center;gap:6px">${esc(u.name || 'مستخدم')} ${isAdminUser ? `<span class="badge-role owner" style="font-size:9px">👑 Admin</span>` : ''} ${isMod ? `<span class="badge-role admin" style="font-size:9px">🛡️ مشرف</span>` : ''}</div>
           <div style="font-size:11px;color:var(--muted)">${esc(u.email || '—')}</div>
-          <div style="font-size:10px;color:var(--muted);margin-top:2px">${isOnline ? '🟢 متصل' : (u.lastSeen ? '⏱️ ' + timeAgo(u.lastSeen) : '⚪')} ${u.verificationStatus === 'approved' ? '• ✅ محقق' : ''}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:2px">${isOnline ? '🟢 متصل' : (u.lastSeen ? '⏱️ ' + timeAgo(u.lastSeen) : '⚪')} ${u.verificationStatus === 'approved' ? '• ✅ محقق' : ''} ${u.skinVerified ? '• 🖼️ جلد متحقق' : ''}</div>
         </div>
       </div>`;
     }).join('')}`;
@@ -2473,6 +2699,7 @@ function renderProfile(){
       ${IS_ADMIN ? `<div style="margin-top:10px"><span class="chip active" style="font-size:11px">👑 Admin</span></div>` : ''}
       ${MY_PERMISSIONS?.isModerator && !IS_ADMIN ? `<div style="margin-top:10px"><span class="chip active" style="font-size:11px;background:linear-gradient(135deg,#0284c7,#38bdf8)">🛡️ مشرف</span></div>` : ''}
       ${CURRENT_USER?.verificationStatus === 'approved' ? `<div style="margin-top:10px"><span class="chip active" style="font-size:11px;background:linear-gradient(135deg,#10b981,#34d399)">✅ محقق</span></div>` : ''}
+      ${CURRENT_USER?.skinVerified ? `<div style="margin-top:10px"><span class="chip active" style="font-size:11px;background:linear-gradient(135deg,#f59e0b,#fbbf24)">🖼️ جلد متحقق</span></div>` : ''}
       <div style="margin-top:30px;display:flex;flex-direction:column;gap:10px">
         ${(IS_ADMIN || MY_PERMISSIONS?.isModerator) ? `<button class="btn btn-primary" id="adminBtn">⚙️ لوحة التحكم</button>` : ''}
         <button class="btn btn-ghost" id="themeBtn">${THEME === 'dark' ? '☀️ نهاري' : '🌙 ليلي'}</button>
